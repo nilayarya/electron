@@ -54,6 +54,7 @@
 #include "shell/browser/api/electron_api_menu.h"
 #include "shell/browser/api/electron_api_utility_process.h"
 #include "shell/browser/api/electron_api_web_contents.h"
+#include "shell/browser/api/geolocation_manager.h"
 #include "shell/browser/api/gpuinfo_manager.h"
 #include "shell/browser/api/process_metric.h"
 #include "shell/browser/browser_process_impl.h"
@@ -944,9 +945,8 @@ std::string App::GetLocale() {
 
 std::string App::GetSystemLocale(gin_helper::ErrorThrower thrower) const {
   if (!Browser::Get()->is_ready()) {
-    thrower.ThrowError(
-        "app.getSystemLocale() can only be called "
-        "after app is ready");
+    thrower.ThrowError("app.getSystemLocale() can only be called "
+                       "after app is ready");
     return {};
   }
   return static_cast<BrowserProcessImpl*>(g_browser_process)->GetSystemLocale();
@@ -1108,9 +1108,8 @@ bool App::Relaunch(gin::Arguments* js_args) {
 
 void App::DisableHardwareAcceleration(gin_helper::ErrorThrower thrower) {
   if (Browser::Get()->is_ready()) {
-    thrower.ThrowError(
-        "app.disableHardwareAcceleration() can only be called "
-        "before app is ready");
+    thrower.ThrowError("app.disableHardwareAcceleration() can only be called "
+                       "before app is ready");
     return;
   }
   if (content::GpuDataManager::Initialized()) {
@@ -1397,6 +1396,45 @@ v8::Local<v8::Promise> App::GetGPUInfo(v8::Isolate* isolate,
   return handle;
 }
 
+void App::RequestGeolocationPermission() {
+  // Get location manager that is set during startup
+  auto* permission_manager =
+      device::GeolocationSystemPermissionManager::GetInstance();
+  auto& source_ref = permission_manager->GetSystemGeolocationSource();
+  auto* source =
+      static_cast<device::SystemGeolocationSourceAppleCustom*>(&source_ref);
+  // Request permission
+  source->RequestPermission();
+}
+
+v8::Local<v8::Promise> App::GetCurrentPosition(gin::Arguments* args) {
+  v8::Isolate* isolate = args->isolate();
+
+  // Create a promise that will resolve with a the position object
+  gin_helper::Promise<gin_helper::Dictionary> promise(isolate);
+  v8::Local<v8::Promise> handle = promise.GetHandle();
+
+  // Get location manager that is set during startup
+  auto* permission_manager =
+      device::GeolocationSystemPermissionManager::GetInstance();
+  auto& source_ref = permission_manager->GetSystemGeolocationSource();
+  auto* source =
+      static_cast<device::SystemGeolocationSourceAppleCustom*>(&source_ref);
+
+  // Get the current location synchronously
+  auto [latitude, longitude] = source->GetCurrentLocation();
+
+  // Create position object only with latitude and longitude for now
+  gin_helper::Dictionary position = gin::Dictionary::CreateEmpty(isolate);
+  position.Set("latitude", latitude);
+  position.Set("longitude", longitude);
+
+  // Resolve the promise with the position object
+  promise.Resolve(position);
+
+  return handle;
+}
+
 static void RemoveNoSandboxSwitch(base::CommandLine* command_line) {
   if (command_line->HasSwitch(sandbox::policy::switches::kNoSandbox)) {
     const base::CommandLine::CharType* noSandboxArg =
@@ -1413,9 +1451,8 @@ static void RemoveNoSandboxSwitch(base::CommandLine* command_line) {
 
 void App::EnableSandbox(gin_helper::ErrorThrower thrower) {
   if (Browser::Get()->is_ready()) {
-    thrower.ThrowError(
-        "app.enableSandbox() can only be called "
-        "before app is ready");
+    thrower.ThrowError("app.enableSandbox() can only be called "
+                       "before app is ready");
     return;
   }
 
@@ -1797,6 +1834,9 @@ gin::ObjectTemplateBuilder App::GetObjectTemplateBuilder(v8::Isolate* isolate) {
       .SetMethod("getAppMetrics", &App::GetAppMetrics)
       .SetMethod("getGPUFeatureStatus", &App::GetGPUFeatureStatus)
       .SetMethod("getGPUInfo", &App::GetGPUInfo)
+      .SetMethod("requestGeolocationPermission",
+                 &App::RequestGeolocationPermission)
+      .SetMethod("getCurrentPosition", &App::GetCurrentPosition)
 #if IS_MAS_BUILD()
       .SetMethod("startAccessingSecurityScopedResource",
                  &App::StartAccessingSecurityScopedResource)

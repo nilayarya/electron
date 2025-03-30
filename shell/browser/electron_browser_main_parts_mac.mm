@@ -10,11 +10,11 @@
 #include "base/apple/foundation_util.h"
 #include "services/device/public/cpp/geolocation/geolocation_system_permission_manager.h"
 #include "services/device/public/cpp/geolocation/system_geolocation_source_apple.h"
+#include "shell/browser/api/geolocation_manager.h"
 #include "shell/browser/browser_process_impl.h"
 #include "shell/browser/mac/electron_application.h"
 #include "shell/browser/mac/electron_application_delegate.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-
 namespace electron {
 
 static ElectronApplicationDelegate* __strong delegate_;
@@ -34,7 +34,7 @@ void ElectronBrowserMainParts::PreCreateMainMessageLoop() {
 
   if (!device::GeolocationSystemPermissionManager::GetInstance()) {
     device::GeolocationSystemPermissionManager::SetInstance(
-        device::SystemGeolocationSourceApple::
+        device::SystemGeolocationSourceAppleCustom::
             CreateGeolocationSystemPermissionManager());
   }
 }

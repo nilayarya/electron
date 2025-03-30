@@ -63,3 +63,11 @@ async function initialize () {
 contextBridge.exposeInMainWorld('electronDefaultApp', {
   initialize
 });
+
+contextBridge.exposeInMainWorld('electron', {
+  // Create a geolocation property with its own methods
+  geolocation: {
+    getCurrentPosition: () => ipcRenderer.invoke('get-current-position'),
+    requestPermission: () => ipcRenderer.invoke('request-geolocation-permission')
+  }
+});

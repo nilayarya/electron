@@ -231,6 +231,8 @@ class App final : public ElectronBrowserClient::Delegate,
   v8::Local<v8::Value> GetGPUFeatureStatus(v8::Isolate* isolate);
   v8::Local<v8::Promise> GetGPUInfo(v8::Isolate* isolate,
                                     const std::string& info_type);
+  void RequestGeolocationPermission();
+  v8::Local<v8::Promise> GetCurrentPosition(gin::Arguments* args);
   void EnableSandbox(gin_helper::ErrorThrower thrower);
   void SetUserAgentFallback(const std::string& user_agent);
   std::string GetUserAgentFallback();
