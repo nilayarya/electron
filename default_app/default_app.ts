@@ -39,13 +39,29 @@ function isTrustedSender (webContents: Electron.WebContents) {
   }
 }
 
+// Correct implementation
+ipcMain.handle('get-current-position', async () => {
+  try {
+    // @ts-ignore
+    const position = await app.getCurrentPosition();
+    return position;
+  } catch (error) {
+    console.error('Error getting location:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('request-geolocation-permission', () => {
+  // @ts-ignore
+  app.requestGeolocationPermission();
+});
+
 ipcMain.handle('bootstrap', (event) => {
   return isTrustedSender(event.sender) ? electronPath : null;
 });
 
 async function createWindow (backgroundColor?: string) {
   await app.whenReady();
-
   const options: Electron.BrowserWindowConstructorOptions = {
     width: 960,
     height: 620,
