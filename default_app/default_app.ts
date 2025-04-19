@@ -44,6 +44,7 @@ ipcMain.handle('bootstrap', (event) => {
 });
 
 async function createWindow (backgroundColor?: string) {
+  app.commandLine.appendSwitch('disable-geolocation');
   await app.whenReady();
 
   const options: Electron.BrowserWindowConstructorOptions = {
@@ -75,6 +76,10 @@ async function createWindow (backgroundColor?: string) {
 
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, done) => {
     const parsedUrl = new URL(webContents.getURL());
+
+    if (permission === 'geolocation') {
+      console.log(`Inside main.ts, default_app, Geolocation permission requested by: ${parsedUrl.origin}`);
+    }
 
     const options: Electron.MessageBoxOptions = {
       title: 'Permission Request',
