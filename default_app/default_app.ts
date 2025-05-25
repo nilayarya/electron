@@ -57,6 +57,11 @@ async function createWindow (backgroundColor?: string) {
       sandbox: true,
       nodeIntegration: false
     },
+    windowStateSavePolicy: {
+      stateId: 'first-test-window',
+      bounds: true,
+      displayMode: true
+    } as any,
     useContentSize: true,
     show: false
   };

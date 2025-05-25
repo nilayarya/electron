@@ -10,17 +10,21 @@
 
 #include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "include/core/SkColor.h"
 #include "shell/browser/background_throttling_source.h"
 #include "shell/browser/browser.h"
 #include "shell/browser/draggable_region_provider.h"
+#include "shell/browser/electron_browser_context.h"
 #include "shell/browser/native_window_features.h"
 #include "shell/browser/ui/drag_util.h"
 #include "shell/browser/window_list.h"
 #include "shell/common/color_util.h"
+#include "shell/common/electron_constants.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/gin_helper/persistent_dictionary.h"
 #include "shell/common/options_switches.h"
@@ -31,6 +35,9 @@
 #if !BUILDFLAG(IS_MAC)
 #include "shell/browser/ui/views/frameless_view.h"
 #endif
+
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "ui/display/win/screen_win.h"
@@ -98,6 +105,12 @@ gfx::Size GetExpandedWindowSize(const NativeWindow* window, gfx::Size size) {
 NativeWindow::NativeWindow(const gin_helper::Dictionary& options,
                            NativeWindow* parent)
     : widget_(std::make_unique<views::Widget>()), parent_(parent) {
+  // Initialize prefs_ to restore window bounds
+  auto* browser_context =
+      electron::ElectronBrowserContext::GetDefaultBrowserContext();
+  if (browser_context)
+    prefs_ = browser_context->prefs();
+
   options.Get(options::kFrame, &has_frame_);
   options.Get(options::kTransparent, &transparent_);
   options.Get(options::kEnableLargerThanScreen, &enable_larger_than_screen_);
@@ -151,21 +164,25 @@ NativeWindow::~NativeWindow() {
 }
 
 void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
+  // Configure window_state_save_policy_ before initializing window
+  ConfigureWindowStateSavePolicy(options);
   // Setup window from options.
-  int x = -1, y = -1;
-  bool center;
-  if (options.Get(options::kX, &x) && options.Get(options::kY, &y)) {
-    SetPosition(gfx::Point(x, y));
+  if (!window_state_save_policy_.bounds) {
+    int x = -1, y = -1;
+    bool center;
+    if (options.Get(options::kX, &x) && options.Get(options::kY, &y)) {
+      SetPosition(gfx::Point(x, y));
 
 #if BUILDFLAG(IS_WIN)
-    // FIXME(felixrieseberg): Dirty, dirty workaround for
-    // https://github.com/electron/electron/issues/10862
-    // Somehow, we need to call `SetBounds` twice to get
-    // usable results. The root cause is still unknown.
-    SetPosition(gfx::Point(x, y));
+      // FIXME(felixrieseberg): Dirty, dirty workaround for
+      // https://github.com/electron/electron/issues/10862
+      // Somehow, we need to call `SetBounds` twice to get
+      // usable results. The root cause is still unknown.
+      SetPosition(gfx::Point(x, y));
 #endif
-  } else if (options.Get(options::kCenter, &center) && center) {
-    Center();
+    } else if (options.Get(options::kCenter, &center) && center) {
+      Center();
+    }
   }
 
   bool use_content_size = false;
@@ -237,7 +254,9 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
   options.Get(options::kFullScreenable, &fullscreenable);
   SetFullScreenable(fullscreenable);
 
-  if (fullscreen)
+  // Set fullscreen later in RestoreWindowState as prescribed in
+  // window_state_save_policy_
+  if (fullscreen && !window_state_save_policy_.display_mode)
     SetFullScreen(true);
 
   bool resizable;
@@ -250,7 +269,10 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
     SetSkipTaskbar(skip);
   }
   bool kiosk;
-  if (options.Get(options::kKiosk, &kiosk) && kiosk) {
+  options.Get(options::kKiosk, &kiosk);
+  // Set kiosk later in RestoreWindowState as prescribed in
+  // window_state_save_policy_
+  if (kiosk && !window_state_save_policy_.display_mode) {
     SetKiosk(kiosk);
   }
 #if BUILDFLAG(IS_MAC)
@@ -277,6 +299,8 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
   options.Get(options::kTitle, &title);
   SetTitle(title);
 
+  // Restore bounds and displayMode as precribed by window_state_save_policy_
+  RestoreWindowState(options);
   // Then show it.
   bool show = true;
   options.Get(options::kShow, &show);
@@ -766,6 +790,173 @@ void NativeWindow::UpdateBackgroundThrottlingState() {
   }
   GetWidget()->GetCompositor()->SetBackgroundThrottling(
       enable_background_throttling);
+}
+
+void NativeWindow::ConfigureWindowStateSavePolicy(
+    const gin_helper::Dictionary& options) {
+  v8::Local<v8::Value> window_state_save_policy_value;
+
+  if (options.Get(options::kWindowStateSavePolicy,
+                  &window_state_save_policy_value) &&
+      window_state_save_policy_value->IsObject()) {
+    auto policy_dict = gin_helper::Dictionary::CreateEmpty(options.isolate());
+    options.Get(options::kWindowStateSavePolicy, &policy_dict);
+
+    std::string state_id;
+    if (policy_dict.Get(options::kStateId, &state_id)) {
+      window_state_save_policy_.state_id = state_id;
+    }
+
+    bool save_bounds = false;
+    if (policy_dict.Get(options::kBounds, &save_bounds)) {
+      window_state_save_policy_.bounds = save_bounds;
+    }
+
+    bool save_display_mode = false;
+    if (policy_dict.Get(options::kDisplayMode, &save_display_mode)) {
+      window_state_save_policy_.display_mode = save_display_mode;
+    }
+    // Future configurations can be added here below
+  }
+}
+
+void NativeWindow::SaveWindowState() {
+  if (!prefs_ || window_state_save_policy_.state_id.empty() ||
+      is_state_being_restored_)
+    return;
+
+  gfx::Rect bounds = GetBounds();
+
+  base::Value::Dict window_preferences;
+  window_preferences.Set("left", bounds.x());
+  window_preferences.Set("top", bounds.y());
+  window_preferences.Set("right", bounds.right());
+  window_preferences.Set("bottom", bounds.bottom());
+
+  window_preferences.Set("is_minimized", IsMinimized());
+  window_preferences.Set("is_maximized", IsMaximized());
+  window_preferences.Set("is_fullscreen", IsFullscreen());
+
+  display::Screen* screen = display::Screen::GetScreen();
+  display::Display display = screen->GetDisplayMatching(bounds);
+  gfx::Rect work_area = display.work_area();
+
+  window_preferences.Set("work_area_left", work_area.x());
+  window_preferences.Set("work_area_top", work_area.y());
+  window_preferences.Set("work_area_right", work_area.right());
+  window_preferences.Set("work_area_bottom", work_area.bottom());
+
+  std::string state_id = window_state_save_policy_.state_id;
+
+  ScopedDictPrefUpdate update(prefs_, electron::kWindowStates);
+  update->Set(state_id, std::move(window_preferences));
+}
+
+void NativeWindow::RestoreWindowState(const gin_helper::Dictionary& options) {
+  if (!prefs_ || window_state_save_policy_.state_id.empty())
+    return;
+
+  std::string state_id = window_state_save_policy_.state_id;
+  const base::Value::Dict* window_preferences = nullptr;
+
+  const base::Value& value = prefs_->GetValue(electron::kWindowStates);
+  if (value.is_dict()) {
+    const base::Value::Dict& dict = value.GetDict();
+    window_preferences = dict.FindDict(state_id);
+  }
+
+  if (!window_preferences)
+    return;
+
+  // Guard against recursive calls to SaveWindowState while restoring
+  is_state_being_restored_ = true;
+
+  if (window_state_save_policy_.bounds) {
+    std::optional<int> saved_left = window_preferences->FindInt("left");
+    std::optional<int> saved_top = window_preferences->FindInt("top");
+    std::optional<int> saved_right = window_preferences->FindInt("right");
+    std::optional<int> saved_bottom = window_preferences->FindInt("bottom");
+
+    std::optional<int> work_area_left =
+        window_preferences->FindInt("work_area_left");
+    std::optional<int> work_area_top =
+        window_preferences->FindInt("work_area_top");
+    std::optional<int> work_area_right =
+        window_preferences->FindInt("work_area_right");
+    std::optional<int> work_area_bottom =
+        window_preferences->FindInt("work_area_bottom");
+
+    gfx::Rect saved_work_area;
+    if (work_area_left && work_area_top && work_area_right &&
+        work_area_bottom) {
+      saved_work_area = gfx::Rect(*work_area_left, *work_area_top,
+                                  *work_area_right - *work_area_left,
+                                  *work_area_bottom - *work_area_top);
+    }
+    // As seen on Line 170
+    int x = -1, y = -1;
+    bool center;
+
+    if (saved_left && saved_top && saved_right && saved_bottom) {
+      // WindowSizer::AdjustBoundsToBeVisibleOnDisplay(
+      //   current_display,
+      //   saved_work_area,
+      //   &bounds
+      // );
+      int width = *saved_right - *saved_left;
+      int height = *saved_bottom - *saved_top;
+      SetBounds(gfx::Rect(*saved_left, *saved_top, width, height));
+    }
+    // If the bounds are not saved, revert to the implementation we skipped at
+    // line 166 in this file
+    else if (options.Get(options::kX, &x) && options.Get(options::kY, &y)) {
+      SetPosition(gfx::Point(x, y));
+#if BUILDFLAG(IS_WIN)
+      // FIXME(felixrieseberg): Dirty, dirty workaround for
+      // https://github.com/electron/electron/issues/10862
+      // Somehow, we need to call `SetBounds` twice to get
+      // usable results. The root cause is still unknown.
+      SetPosition(gfx::Point(x, y));
+#endif
+    } else if (options.Get(options::kCenter, &center) && center) {
+      Center();
+    }
+  }
+
+  if (window_state_save_policy_.display_mode) {
+    std::optional<bool> is_minimized =
+        window_preferences->FindBool("is_minimized");
+    std::optional<bool> is_maximized =
+        window_preferences->FindBool("is_maximized");
+    std::optional<bool> is_fullscreen =
+        window_preferences->FindBool("is_fullscreen");
+
+    bool display_mode_saved = is_minimized || is_maximized || is_fullscreen;
+
+    if (display_mode_saved) {
+      if (is_fullscreen && *is_fullscreen) {
+        SetFullScreen(true);
+      } else if (is_maximized && *is_maximized) {
+        Maximize();
+      } else if (is_minimized && *is_minimized) {
+        // Window will flash for a brief second when show() is called
+        // Minimize();
+      }
+    } else {
+      // If the display mode is not saved, revert to the implementation we
+      // skipped at Line 254 and 269 in this file
+      bool fullscreen = false;
+      bool kiosk = false;
+      if (options.Get(options::kFullscreen, &fullscreen) && fullscreen) {
+        SetFullScreen(true);
+      }
+      if (options.Get(options::kKiosk, &kiosk) && kiosk) {
+        SetKiosk(kiosk);
+      }
+    }
+  }
+
+  is_state_being_restored_ = false;
 }
 
 views::Widget* NativeWindow::GetWidget() {

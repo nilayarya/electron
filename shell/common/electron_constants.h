@@ -30,6 +30,8 @@ inline constexpr base::cstring_view kRunAsNode = "ELECTRON_RUN_AS_NODE";
 inline constexpr char kElectronGlobalShortcutsUuid[] =
     "electron.global_shortcuts.uuid";
 
+inline constexpr char kWindowStates[] = "electron.window_states";
+
 #if BUILDFLAG(ENABLE_PDF_VIEWER)
 inline constexpr std::string_view kPDFExtensionPluginName =
     "Chromium PDF Viewer";
