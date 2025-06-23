@@ -427,6 +427,12 @@ class NativeWindow : public base::SupportsUserData,
   void UpdateBackgroundThrottlingState();
 
   void SaveWindowState();
+  void RestoreWindowState(const gin_helper::Dictionary& options);
+  void RestoreBounds(const base::Value::Dict& window_preferences);
+  void AdjustBoundsToBeVisibleOnDisplay(const display::Display& display,
+                                        const gfx::Rect& saved_work_area,
+                                        gfx::Rect* bounds);
+  void RestoreDisplayMode(const base::Value::Dict& window_preferences);
 
  protected:
   friend class api::BrowserView;
@@ -547,8 +553,22 @@ class NativeWindow : public base::SupportsUserData,
 
   gfx::Rect overlay_rect_;
 
+  bool is_being_restored_ = false;
   raw_ptr<PrefService> prefs_ = nullptr;
   std::string window_state_id_;
+  bool restore_bounds_ = true;
+  bool restore_display_mode_ = true;
+
+  // Minimum height of the visible part of a window.
+  const int kMinVisibleHeight = 100;
+  // Minimum width of the visible part of a window.
+  const int kMinVisibleWidth = 100;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // This specifies the minimum percentage of a window's dimension (either width
+  // or height) that must remain visible with the display area.
+  constexpr float kMinVisibleRatio = 0.3f;
+#endif
 
   base::WeakPtrFactory<NativeWindow> weak_factory_{this};
 };

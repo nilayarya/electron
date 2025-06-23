@@ -47,15 +47,28 @@ async function createWindow (backgroundColor?: string) {
   await app.whenReady();
 
   const options: Electron.BrowserWindowConstructorOptions = {
-    width: 960,
+    width: 300,
     height: 620,
+    // maxWidth: 200,
+    // maxHeight: 200,
+    // minWidth: 1200,
+    // minHeight: 6,
     autoHideMenuBar: true,
+    // fullscreenable: false,
+    // fullscreen: true,
+    // kiosk: true,
     backgroundColor,
     webPreferences: {
       preload: url.fileURLToPath(new URL('preload.js', import.meta.url)),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false
+    },
+    windowStateRestoreOptions: {
+      stateId: 'trust'
+      // @ts-ignore
+      // bounds: true,
+      // displayMode: false
     },
     useContentSize: true,
     show: false
