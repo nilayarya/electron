@@ -124,8 +124,13 @@ NativeWindow::NativeWindow(const gin_helper::Dictionary& options,
 
   if (gin_helper::Dictionary restore_options;
       options.Get(options::kWindowStateRestoreOptions, &restore_options)) {
-    // Initialize window_state_id_
     restore_options.Get(options::kStateId, &window_state_id_);
+    // Restore bounds by default
+    restore_bounds_ = true;
+    restore_options.Get(options::kBounds, &restore_bounds_);
+    // Restore display mode by default
+    restore_display_mode_ = true;
+    restore_options.Get(options::kDisplayMode, &restore_display_mode_);
     // Initialize prefs_ to save/restore window bounds if we have a valid
     // stateId
     if (!window_state_id_.empty()) {
@@ -244,7 +249,15 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
   options.Get(options::kFullScreenable, &fullscreenable);
   SetFullScreenable(fullscreenable);
 
-  if (fullscreen)
+  // Restore window state (bounds and display mode) at this point in
+  // initialization. We deliberately restore bounds before display modes
+  // (fullscreen/kiosk) since the target display for these states depends on the
+  // window's initial bounds. Also, restoring here ensures we respect min/max
+  // width/height and fullscreenable constraints.
+  if (prefs_ && !window_state_id_.empty())
+    RestoreWindowState(options);
+
+  if (fullscreen && !restore_display_mode_)
     SetFullScreen(true);
 
   bool resizable;
@@ -257,7 +270,7 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
     SetSkipTaskbar(skip);
   }
   bool kiosk;
-  if (options.Get(options::kKiosk, &kiosk) && kiosk) {
+  if (options.Get(options::kKiosk, &kiosk) && kiosk && !restore_display_mode_) {
     SetKiosk(kiosk);
   }
 #if BUILDFLAG(IS_MAC)
@@ -283,8 +296,8 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
   std::string title(Browser::Get()->GetName());
   options.Get(options::kTitle, &title);
   SetTitle(title);
-  // TODO(nilayarya): Save window state after restoration logic is implemented
-  // here.
+  // Save updated window state after restoration adjustments are complete if
+  // any.
   SaveWindowState();
   // Then show it.
   if (options.ValueOrDefault(options::kShow, true))
@@ -843,7 +856,7 @@ void NativeWindow::DebouncedSaveWindowState() {
 }
 
 void NativeWindow::SaveWindowState() {
-  if (!prefs_ || window_state_id_.empty())
+  if (!prefs_ || window_state_id_.empty() || is_being_restored_)
     return;
 
   ScopedDictPrefUpdate update(prefs_, electron::kWindowStates);
@@ -894,6 +907,141 @@ void NativeWindow::FlushWindowState() {
   } else {
     SaveWindowState();
   }
+}
+
+void NativeWindow::RestoreWindowState(const gin_helper::Dictionary& options) {
+  is_being_restored_ = true;
+  const base::Value& value = prefs_->GetValue(electron::kWindowStates);
+  const base::Value::Dict* window_preferences =
+      value.is_dict() ? value.GetDict().FindDict(window_state_id_) : nullptr;
+
+  if (!window_preferences) {
+    is_being_restored_ = false;
+    return;
+  }
+
+  if (restore_bounds_) {
+    RestoreBounds(*window_preferences);
+  }
+
+  if (restore_display_mode_) {
+    RestoreDisplayMode(*window_preferences);
+  }
+
+  is_being_restored_ = false;
+}
+
+void NativeWindow::RestoreDisplayMode(
+    const base::Value::Dict& window_preferences) {
+  std::optional<bool> fullscreen =
+      window_preferences.FindBool(electron::kFullscreen);
+  std::optional<bool> maximized =
+      window_preferences.FindBool(electron::kMaximized);
+  std::optional<bool> kiosk = window_preferences.FindBool(electron::kKiosk);
+
+  if (kiosk && *kiosk) {
+    SetKiosk(true);
+  } else if (fullscreen && *fullscreen) {
+    SetFullScreen(true);
+  } else if (maximized && *maximized) {
+    Maximize();
+  }
+}
+
+void NativeWindow::RestoreBounds(const base::Value::Dict& window_preferences) {
+  std::optional<int> saved_left = window_preferences.FindInt(electron::kLeft);
+  std::optional<int> saved_top = window_preferences.FindInt(electron::kTop);
+  std::optional<int> saved_right = window_preferences.FindInt(electron::kRight);
+  std::optional<int> saved_bottom =
+      window_preferences.FindInt(electron::kBottom);
+
+  std::optional<int> work_area_left =
+      window_preferences.FindInt(electron::kWorkAreaLeft);
+  std::optional<int> work_area_top =
+      window_preferences.FindInt(electron::kWorkAreaTop);
+  std::optional<int> work_area_right =
+      window_preferences.FindInt(electron::kWorkAreaRight);
+  std::optional<int> work_area_bottom =
+      window_preferences.FindInt(electron::kWorkAreaBottom);
+
+  if (!saved_left || !saved_top || !saved_right || !saved_bottom ||
+      !work_area_left || !work_area_top || !work_area_right ||
+      !work_area_bottom) {
+    return;
+  }
+
+  gfx::Rect bounds =
+      gfx::Rect(*saved_left, *saved_top, *saved_right - *saved_left,
+                *saved_bottom - *saved_top);
+
+  display::Screen* screen = display::Screen::GetScreen();
+  const display::Display display = screen->GetDisplayMatching(bounds);
+
+  gfx::Rect saved_work_area = gfx::Rect(*work_area_left, *work_area_top,
+                                        *work_area_right - *work_area_left,
+                                        *work_area_bottom - *work_area_top);
+
+  AdjustBoundsToBeVisibleOnDisplay(display, saved_work_area, &bounds);
+
+  SetBounds(bounds);
+}
+
+void NativeWindow::AdjustBoundsToBeVisibleOnDisplay(
+    const display::Display& display,
+    const gfx::Rect& saved_work_area,
+    gfx::Rect* bounds) {
+  // Ensure that the window is at least kMinVisibleHeight * kMinVisibleWidth.
+  bounds->set_height(std::max(kMinVisibleHeight, bounds->height()));
+  bounds->set_width(std::max(kMinVisibleWidth, bounds->width()));
+
+  const gfx::Rect work_area = display.work_area();
+  // Ensure that the title bar is not above the work area.
+  if (bounds->y() < work_area.y()) {
+    bounds->set_y(work_area.y());
+  }
+
+  // Reposition and resize the bounds if the saved_work_area is different from
+  // the current work area and the current work area doesn't completely contain
+  // the bounds.
+  if (!saved_work_area.IsEmpty() && saved_work_area != work_area &&
+      !work_area.Contains(*bounds)) {
+    bounds->AdjustToFit(work_area);
+  }
+
+#if BUILDFLAG(IS_MAC)
+  // On mac, we want to be aggressive about repositioning windows that are
+  // partially offscreen.  If the window is partially offscreen horizontally,
+  // snap to the nearest edge of the work area. This call also adjusts the
+  // height, width if needed to make the window fully visible.
+  bounds->AdjustToFit(work_area);
+#else
+  // On non-Mac platforms, we are less aggressive about repositioning. Simply
+  // ensure that at least kMinVisibleWidth * kMinVisibleHeight is visible or
+  // `kMinVisibleRatio` of width and height is visible on ChromeOS.
+  int min_visible_width = kMinVisibleWidth;
+  int min_visible_height = kMinVisibleHeight;
+#if BUILDFLAG(IS_CHROMEOS)
+  min_visible_width = std::max(
+      min_visible_width, base::ClampRound(bounds->width() * kMinVisibleRatio));
+  min_visible_height =
+      std::max(min_visible_height,
+               base::ClampRound(bounds->height() * kMinVisibleRatio));
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  const int min_y = work_area.y() + min_visible_height - bounds->height();
+  const int min_x = work_area.x() + min_visible_width - bounds->width();
+  const int max_y = work_area.bottom() - min_visible_height;
+  const int max_x = work_area.right() - min_visible_width;
+  // Reposition and resize the bounds to make it fully visible inside the work
+  // area if the work area and bounds are both small.
+  // `min_x >= max_x` happens when `work_area.width() + bounds.width() <= 2 *
+  // min_visible_width`. Similar for `min_y >= max_y` in height dimension.
+  if (min_x >= max_x || min_y >= max_y) {
+    bounds->AdjustToFit(work_area);
+  } else {
+    bounds->set_y(std::clamp(bounds->y(), min_y, max_y));
+    bounds->set_x(std::clamp(bounds->x(), min_x, max_x));
+  }
+#endif  // BUILDFLAG(IS_MAC)
 }
 
 // static
