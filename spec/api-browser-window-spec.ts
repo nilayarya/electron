@@ -7322,5 +7322,201 @@ describe('BrowserWindow module', () => {
         });
       });
     });
+
+    describe('window state restoration', () => {
+      const preferencesPath = path.join(app.getPath('userData'), 'Local State');
+
+      const getPrefsModTime = (): Date => {
+        try {
+          return fs.statSync(preferencesPath).mtime;
+        } catch {
+          throw new Error(`Test requires preferences file to exist at path: ${preferencesPath}.`);
+        }
+      };
+
+      const waitForPrefsUpdate = async (initialModTime: Date, timeoutMs: number = 20000): Promise<void> => {
+        const startTime = Date.now();
+        while (true) {
+          const currentModTime = getPrefsModTime();
+          if (currentModTime > initialModTime) return;
+          if (Date.now() - startTime > timeoutMs) {
+            throw new Error(`Window state was not flushed to disk within ${timeoutMs}ms`);
+          }
+          await setTimeout(1000);
+        }
+      };
+
+      afterEach(closeAllWindows);
+
+      describe('bounds restoration', () => {
+        let w: BrowserWindow;
+        const stateId = 'test-bounds-restore';
+
+        beforeEach(async () => {
+          w = new BrowserWindow({
+            show: false,
+            windowStateRestoreOptions: {
+              stateId
+            }
+          });
+
+          w.setSize(400, 300);
+        });
+
+        it('should restore window position', async () => {
+          const moved = once(w, 'move');
+          w.setPosition(150, 200);
+          await moved;
+
+          const initialModTime = getPrefsModTime();
+          w.close();
+          await waitForPrefsUpdate(initialModTime);
+
+          w = new BrowserWindow({
+            show: false,
+            windowStateRestoreOptions: {
+              stateId,
+              bounds: true,
+              displayMode: false
+            }
+          });
+
+          const [x, y] = w.getPosition();
+          expect(x).to.equal(150);
+          expect(y).to.equal(200);
+        });
+
+        it('should restore window size', async () => {
+          const resized = once(w, 'resize');
+          w.setSize(500, 400);
+          await resized;
+
+          const initialModTime = getPrefsModTime();
+          w.close();
+          await waitForPrefsUpdate(initialModTime);
+
+          w = new BrowserWindow({
+            show: false,
+            windowStateRestoreOptions: {
+              stateId,
+              bounds: true,
+              displayMode: false
+            }
+          });
+
+          const [width, height] = w.getSize();
+          expect(width).to.equal(500);
+          expect(height).to.equal(400);
+        });
+
+        it('should restore both position and size', async () => {
+          const moved = once(w, 'move');
+          w.setPosition(100, 150);
+          await moved;
+
+          const resized = once(w, 'resize');
+          w.setSize(600, 450);
+          await resized;
+
+          const initialModTime = getPrefsModTime();
+          w.close();
+          await waitForPrefsUpdate(initialModTime);
+
+          w = new BrowserWindow({
+            show: false,
+            windowStateRestoreOptions: {
+              stateId,
+              bounds: true,
+              displayMode: false
+            }
+          });
+
+          const [x, y] = w.getPosition();
+          const [width, height] = w.getSize();
+          expect(x).to.equal(100);
+          expect(y).to.equal(150);
+          expect(width).to.equal(600);
+          expect(height).to.equal(450);
+        });
+      });
+
+      describe('display mode restoration', () => {
+        let w: BrowserWindow;
+        const stateId = 'test-display-restore';
+
+        beforeEach(async () => {
+          w = new BrowserWindow({
+            show: false,
+            width: 400,
+            height: 300,
+            windowStateRestoreOptions: {
+              stateId,
+              displayMode: false
+            }
+          });
+        });
+
+        it('should restore maximized state', async () => {
+          const maximized = once(w, 'maximize');
+          w.maximize();
+          await maximized;
+
+          const initialModTime = getPrefsModTime();
+          w.close();
+          await waitForPrefsUpdate(initialModTime);
+
+          w = new BrowserWindow({
+            show: false,
+            windowStateRestoreOptions: {
+              stateId,
+              bounds: false,
+              displayMode: true
+            }
+          });
+
+          expect(w.isMaximized()).to.equal(true);
+        });
+
+        it('should restore fullscreen state', async () => {
+          w.setFullScreen(true);
+          await setTimeout(1000);
+
+          const initialModTime = getPrefsModTime();
+          w.close();
+          await waitForPrefsUpdate(initialModTime);
+
+          w = new BrowserWindow({
+            show: false,
+            windowStateRestoreOptions: {
+              stateId,
+              bounds: false,
+              displayMode: true
+            }
+          });
+
+          expect(w.isFullScreen()).to.equal(true);
+        });
+
+        it('should restore kiosk state', async () => {
+          w.setKiosk(true);
+          await setTimeout(1000);
+
+          const initialModTime = getPrefsModTime();
+          w.close();
+          await waitForPrefsUpdate(initialModTime);
+
+          w = new BrowserWindow({
+            show: false,
+            windowStateRestoreOptions: {
+              stateId,
+              bounds: false,
+              displayMode: true
+            }
+          });
+
+          expect(w.isKiosk()).to.equal(true);
+        });
+      });
+    });
   });
 });

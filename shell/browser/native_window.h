@@ -438,6 +438,18 @@ class NativeWindow : public base::SupportsUserData,
   // DebouncedSaveWindowState. This does NOT flush the actual disk write.
   void FlushWindowState();
 
+  // Restores window state - bounds first and then display mode.
+  void RestoreWindowState(const gin_helper::Dictionary& options);
+  // Applies saved bounds to the window.
+  void RestoreBounds(const base::Value::Dict& window_preferences);
+  // Helper function to adjust window bounds to ensure visibility on the target
+  // display.
+  void AdjustBoundsToBeVisibleOnDisplay(const display::Display& display,
+                                        const gfx::Rect& saved_work_area,
+                                        gfx::Rect* bounds);
+  // Applies saved display mode (fullscreen, maximized, or kiosk) to the window.
+  void RestoreDisplayMode(const base::Value::Dict& window_preferences);
+
  protected:
   friend class api::BrowserView;
 
@@ -564,13 +576,31 @@ class NativeWindow : public base::SupportsUserData,
   // The boolean parsing of the "windowStatePersistence" option
   bool window_state_persistence_enabled_ = false;
 
+  // Flag to prevent SaveWindowState calls during window restoration.
+  bool is_being_restored_ = false;
+
   // PrefService is used to persist window bounds and state.
   // Only populated when windowStatePersistence is enabled and window has a
   // valid name.
   raw_ptr<PrefService> prefs_ = nullptr;
+  // Whether to restore bounds.
+  bool restore_bounds_;
+  // Whether to restore display mode.
+  bool restore_display_mode_;
 
   // Timer to debounce window state saving operations.
   base::OneShotTimer save_window_state_timer_;
+
+  // Minimum height of the visible part of a window.
+  const int kMinVisibleHeight = 100;
+  // Minimum width of the visible part of a window.
+  const int kMinVisibleWidth = 100;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // This specifies the minimum percentage of a window's dimension (either width
+  // or height) that must remain visible with the display area.
+  constexpr float kMinVisibleRatio = 0.3f;
+#endif
 
   base::WeakPtrFactory<NativeWindow> weak_factory_{this};
 };
