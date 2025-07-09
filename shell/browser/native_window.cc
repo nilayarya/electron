@@ -126,8 +126,11 @@ NativeWindow::NativeWindow(const gin_helper::Dictionary& options,
 
   if (gin_helper::Dictionary persistence_options;
       options.Get(options::kWindowStatePersistence, &persistence_options)) {
-    // Other options will be parsed here in the future.
     window_state_persistence_enabled_ = true;
+    restore_bounds_ = true;
+    persistence_options.Get(options::kBounds, &restore_bounds_);
+    restore_display_mode_ = true;
+    persistence_options.Get(options::kDisplayMode, &restore_display_mode_);
   } else if (bool flag; options.Get(options::kWindowStatePersistence, &flag)) {
     window_state_persistence_enabled_ = flag;
   }
@@ -254,7 +257,7 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
   // (fullscreen/kiosk) since the target display for these states depends on the
   // window's initial bounds. Also, restoring here ensures we respect min/max
   // width/height and fullscreenable constraints.
-  if (prefs_ && !window_state_id_.empty())
+  if (prefs_ && !window_name_.empty())
     RestoreWindowState(options);
 
   if (fullscreen && !restore_display_mode_)
@@ -910,15 +913,18 @@ void NativeWindow::FlushWindowState() {
 }
 
 void NativeWindow::RestoreWindowState(const gin_helper::Dictionary& options) {
+  LOG(ERROR) << "Restoring window state for window: " << window_name_;
   is_being_restored_ = true;
   const base::Value& value = prefs_->GetValue(electron::kWindowStates);
   const base::Value::Dict* window_preferences =
-      value.is_dict() ? value.GetDict().FindDict(window_state_id_) : nullptr;
+      value.is_dict() ? value.GetDict().FindDict(window_name_) : nullptr;
 
   if (!window_preferences) {
     is_being_restored_ = false;
     return;
   }
+
+  LOG(ERROR) << "Window preferences: " << window_preferences->DebugString();
 
   if (restore_bounds_) {
     RestoreBounds(*window_preferences);
@@ -949,6 +955,7 @@ void NativeWindow::RestoreDisplayMode(
 }
 
 void NativeWindow::RestoreBounds(const base::Value::Dict& window_preferences) {
+  LOG(ERROR) << "Restoring bounds for window: " << window_name_;
   std::optional<int> saved_left = window_preferences.FindInt(electron::kLeft);
   std::optional<int> saved_top = window_preferences.FindInt(electron::kTop);
   std::optional<int> saved_right = window_preferences.FindInt(electron::kRight);
@@ -982,7 +989,7 @@ void NativeWindow::RestoreBounds(const base::Value::Dict& window_preferences) {
                                         *work_area_bottom - *work_area_top);
 
   AdjustBoundsToBeVisibleOnDisplay(display, saved_work_area, &bounds);
-
+  LOG(ERROR) << "Adjusted bounds: " << bounds.ToString();
   SetBounds(bounds);
 }
 

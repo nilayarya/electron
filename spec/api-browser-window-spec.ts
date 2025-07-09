@@ -7350,14 +7350,13 @@ describe('BrowserWindow module', () => {
 
       describe('bounds restoration', () => {
         let w: BrowserWindow;
-        const stateId = 'test-bounds-restore';
+        const windowName = 'test-bounds-restore';
 
         beforeEach(async () => {
           w = new BrowserWindow({
             show: false,
-            windowStateRestoreOptions: {
-              stateId
-            }
+            name: windowName,
+            windowStatePersistence: true
           });
 
           w.setSize(400, 300);
@@ -7374,8 +7373,8 @@ describe('BrowserWindow module', () => {
 
           w = new BrowserWindow({
             show: false,
-            windowStateRestoreOptions: {
-              stateId,
+            name: windowName,
+            windowStatePersistence: {
               bounds: true,
               displayMode: false
             }
@@ -7397,8 +7396,8 @@ describe('BrowserWindow module', () => {
 
           w = new BrowserWindow({
             show: false,
-            windowStateRestoreOptions: {
-              stateId,
+            name: windowName,
+            windowStatePersistence: {
               bounds: true,
               displayMode: false
             }
@@ -7424,8 +7423,8 @@ describe('BrowserWindow module', () => {
 
           w = new BrowserWindow({
             show: false,
-            windowStateRestoreOptions: {
-              stateId,
+            name: windowName,
+            windowStatePersistence: {
               bounds: true,
               displayMode: false
             }
@@ -7442,17 +7441,15 @@ describe('BrowserWindow module', () => {
 
       describe('display mode restoration', () => {
         let w: BrowserWindow;
-        const stateId = 'test-display-restore';
+        const windowName = 'test-display-restore';
 
         beforeEach(async () => {
           w = new BrowserWindow({
             show: false,
             width: 400,
             height: 300,
-            windowStateRestoreOptions: {
-              stateId,
-              displayMode: false
-            }
+            name: windowName,
+            windowStatePersistence: true
           });
         });
 
@@ -7467,11 +7464,8 @@ describe('BrowserWindow module', () => {
 
           w = new BrowserWindow({
             show: false,
-            windowStateRestoreOptions: {
-              stateId,
-              bounds: false,
-              displayMode: true
-            }
+            name: windowName,
+            windowStatePersistence: true
           });
 
           expect(w.isMaximized()).to.equal(true);
@@ -7487,11 +7481,8 @@ describe('BrowserWindow module', () => {
 
           w = new BrowserWindow({
             show: false,
-            windowStateRestoreOptions: {
-              stateId,
-              bounds: false,
-              displayMode: true
-            }
+            name: windowName,
+            windowStatePersistence: true
           });
 
           expect(w.isFullScreen()).to.equal(true);
@@ -7507,11 +7498,8 @@ describe('BrowserWindow module', () => {
 
           w = new BrowserWindow({
             show: false,
-            windowStateRestoreOptions: {
-              stateId,
-              bounds: false,
-              displayMode: true
-            }
+            name: windowName,
+            windowStatePersistence: true
           });
 
           expect(w.isKiosk()).to.equal(true);
