@@ -7968,6 +7968,52 @@ describe('BrowserWindow module', () => {
           w.destroy();
         });
       });
+
+      ifdescribe(process.platform === 'darwin')('multi-monitor tests', () => {
+        const virtualDisplay = require('@electron-ci/virtual-display');
+        // We expect only the primary display to be present before the tests start
+        beforeEach(async () => {
+          // virtualDisplay.forceCleanup();
+          // await setTimeout(2000); // Wait longer for deep cleanup
+
+          const displayCount = screen.getAllDisplays().length;
+          // console.log(`Display count after cleanup: ${displayCount}`);
+          expect(displayCount).to.equal(1);
+        });
+
+        afterEach(async () => {
+          // Force cleanup after each test
+          console.log('=== AFTER EACH TEST ===');
+          virtualDisplay.forceCleanup();
+          await setTimeout(2000);
+        });
+
+        it('should restore window bounds correctly on a secondary display', async () => {
+          const dummy1 = virtualDisplay.create();
+          const dummy2 = virtualDisplay.create();
+          console.log('dummy1', dummy1);
+          console.log('dummy2', dummy2);
+          console.log('screen.getAllDisplays().length', screen.getAllDisplays().length);
+
+          await setTimeout(8000);
+          virtualDisplay.destroy(dummy1);
+          virtualDisplay.destroy(dummy2);
+          await setTimeout(8000);
+        });
+
+        it('should restore window to a visible location when saved display no longer exists', async () => {
+          const dummy1 = virtualDisplay.create();
+          const dummy2 = virtualDisplay.create();
+          console.log('dummy1', dummy1);
+          console.log('dummy2', dummy2);
+          console.log('screen.getAllDisplays().length', screen.getAllDisplays().length);
+
+          await setTimeout(8000);
+          virtualDisplay.destroy(dummy1);
+          virtualDisplay.destroy(dummy2);
+          await setTimeout(8000);
+        });
+      });
     });
   });
 });
