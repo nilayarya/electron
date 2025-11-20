@@ -18,6 +18,7 @@
 #include "base/observer_list.h"
 #include "base/strings/cstring_view.h"
 #include "base/supports_user_data.h"
+#include "base/timer/timer.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "extensions/browser/app_window/size_constraints.h"
@@ -27,6 +28,7 @@
 
 class SkRegion;
 class DraggableRegionProvider;
+class PrefService;
 
 namespace input {
 struct NativeWebKeyboardEvent;
@@ -165,9 +167,11 @@ class NativeWindow : public base::SupportsUserData,
   void SetTitle(std::string_view title);
   [[nodiscard]] std::string GetTitle() const;
 
+  [[nodiscard]] std::string GetName() const;
+
   // Ability to augment the window title for the screen readers.
   void SetAccessibleTitle(const std::string& title);
-  std::string GetAccessibleTitle();
+  [[nodiscard]] std::string GetAccessibleTitle() const;
 
   virtual void FlashFrame(bool flash) = 0;
   virtual void SetSkipTaskbar(bool skip) = 0;
@@ -340,6 +344,7 @@ class NativeWindow : public base::SupportsUserData,
   void NotifyNewWindowForTab();
   void NotifyWindowSystemContextMenu(int x, int y, bool* prevent_default);
   void NotifyLayoutWindowControlsOverlay();
+  void NotifyWindowStateRestored();
 
 #if BUILDFLAG(IS_WIN)
   void NotifyWindowMessage(UINT message, WPARAM w_param, LPARAM l_param);
@@ -429,6 +434,28 @@ class NativeWindow : public base::SupportsUserData,
   // throttling, then throttling in the `ui::Compositor` will be disabled.
   void UpdateBackgroundThrottlingState();
 
+  // Saves current window state to the Local State JSON file in
+  // app.getPath('userData') via PrefService.
+  // This does NOT immediately write to disk - it updates the in-memory
+  // preference store and queues an asynchronous write operation. The actual
+  // disk write is batched and flushed later.
+  void SaveWindowState();
+  void DebouncedSaveWindowState();
+  // Flushes save_window_state_timer_ that was queued by
+  // DebouncedSaveWindowState. This does NOT flush the actual disk write.
+  void FlushWindowState();
+
+  // Restores window state - bounds first and then display mode.
+  void RestoreWindowState(const gin_helper::Dictionary& options);
+  // Applies saved bounds to the window.
+  void RestoreBounds(const display::Display& display,
+                     const gfx::Rect& saved_work_area,
+                     gfx::Rect& saved_bounds);
+  // Flushes pending display mode restoration (fullscreen, maximized, kiosk)
+  // that was deferred during initialization to respect show=false. This
+  // consumes and clears the restore_display_mode_callback_.
+  void FlushPendingDisplayMode();
+
  protected:
   NativeWindow(const gin_helper::Dictionary& options, NativeWindow* parent);
 
@@ -488,6 +515,10 @@ class NativeWindow : public base::SupportsUserData,
   static inline int32_t next_id_ = 0;
   const int32_t window_id_ = ++next_id_;
 
+  // Identifier for the window provided by the application.
+  // Used by Electron internally for features such as state persistence.
+  std::string window_name_;
+
   // The "titleBarStyle" option.
   const TitleBarStyle title_bar_style_;
 
@@ -545,6 +576,32 @@ class NativeWindow : public base::SupportsUserData,
   std::string background_material_;
 
   gfx::Rect overlay_rect_;
+
+  // Flag to prevent SaveWindowState calls during window restoration.
+  bool is_being_restored_ = false;
+
+  // The boolean parsing of the "windowStatePersistence" option
+  bool window_state_persistence_enabled_ = false;
+
+  // PrefService is used to persist window bounds and state.
+  // Only populated when windowStatePersistence is enabled and window has a
+  // valid name.
+  raw_ptr<PrefService> prefs_ = nullptr;
+
+  // Whether to restore bounds.
+  bool restore_bounds_ = false;
+  // Whether to restore display mode.
+  bool restore_display_mode_ = false;
+  // Callback to restore display mode.
+  base::OnceCallback<void()> restore_display_mode_callback_;
+
+  // Timer to debounce window state saving operations.
+  base::OneShotTimer save_window_state_timer_;
+
+  // Minimum height of the visible part of a window.
+  const int kMinVisibleHeight = 100;
+  // Minimum width of the visible part of a window.
+  const int kMinVisibleWidth = 100;
 
   base::WeakPtrFactory<NativeWindow> weak_factory_{this};
 };
